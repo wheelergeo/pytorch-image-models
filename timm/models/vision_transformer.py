@@ -174,6 +174,11 @@ class Block(nn.Module):
 
     def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         x = x + self.drop_path1(self.ls1(self.attn(self.norm1(x), attn_mask=attn_mask)))
+
+        # Token Merging
+        if os.environ.get("TOME_R") not in ("0", None, ""):
+            x = self.attn.merge_fn(x)[0]
+
         x = x + self.drop_path2(self.ls2(self.mlp(self.norm2(x))))
         return x
 
