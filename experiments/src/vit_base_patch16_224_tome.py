@@ -89,7 +89,7 @@ def evaluate(args: argparse.Namespace):
     with torch.inference_mode():
         model.eval()
         # warmup, reduce variability of first batch time, especially for comparing torchscript vs non
-        dummy_input = torch.randn((args.batch_size,) + tuple(data_config['input_size'])).to(device=device)
+        dummy_input = torch.randn((1,) + tuple(data_config['input_size'])).to(device=device)
         flops, params = profile(model, inputs=(dummy_input,), verbose=False)
         flops, params = clever_format([flops, params], "%.2f")
         for _ in range(5):

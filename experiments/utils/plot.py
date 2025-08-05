@@ -5,8 +5,9 @@ import matplotlib.pyplot as plt
 
 
 def plot_performance(perf_dir: str = "./workdir/performance",
+                     file_regex: str = r"performance_tome_r-(\d+)\.json",
                      save_path: str = "./workdir/performance/performance.png"):
-    pattern = re.compile(r"performance_tome_r-(\d+)\.json")
+    pattern = re.compile(file_regex)
     indices, flops, accuracy, throughput = [], [], [], []
 
     assert os.path.exists(perf_dir), f"Performance directory {perf_dir} does not exist."
@@ -42,7 +43,7 @@ def plot_performance(perf_dir: str = "./workdir/performance",
     ax1.legend(loc='upper left')
     ax2.legend(loc='upper right')
 
-    ax2.set_ylim(50.0, 90.0)
+    ax2.set_ylim(50.0, 85.0)
     plt.title("Token Merging Performance")
     plt.grid(True)
     plt.tight_layout()
