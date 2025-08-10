@@ -1,5 +1,4 @@
 import argparse
-from tokenize import group
 import timm
 import torch
 import os
@@ -15,11 +14,10 @@ from timm.models import safe_model_name, resume_checkpoint
 from timm.scheduler import create_scheduler_v2, scheduler_kwargs
 from timm.optim import create_optimizer_v2, optimizer_kwargs
 from timm.loss import LabelSmoothingCrossEntropy
-from utils.datasets import ParquetImageDataset
+from experiments.utils.datasets import ParquetImageDataset
 from datetime import datetime
 from tqdm import tqdm
 from torch.nn.parallel import DistributedDataParallel
-# from src import vit_base_patch16_224_tome as vit_tome
 
 
 def validate(
@@ -335,9 +333,12 @@ def run(args: argparse.Namespace):
             model,
             **optimizer_kwargs(cfg=args)
         )
-    elif args.lr is not None and args.resume_path in (None, ''):
+    elif args.lr is not None and args.weight_decay is not None and args.resume_path in (None, ''):
         # default lr = 3e-4
-        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        optimizer = create_optimizer_v2(
+            model,
+            **optimizer_kwargs(cfg=args)
+        )
     if is_primary(args):
         print(f'Learning rate: {args.lr:#.3g}')
         
@@ -492,123 +493,133 @@ def run(args: argparse.Namespace):
         print(f'--result\n{json.dumps(display_results[-10:], indent=4)}')
 
 
-if __name__ == '__main__':
+def defaultargs() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
-    parser.add_argument('--device',
-                        type=str,
-                        default='cuda',
-                        help='Device type to use for training')
-    parser.add_argument('--model',
-                        type=str,
-                        default='vit_tiny_patch16_224',
-                        help='Name of model to train')
-    parser.add_argument('--world-size',
-                        type=int,
-                        default=1,
-                        help='Number of distributed devices')
-    parser.add_argument("--local_rank", default=0, type=int)
-    parser.add_argument('--drop-path-rate', 
-                        type=float, 
-                        default=0.2, 
-                        help='Stochastic depth rate')
-    parser.add_argument('--drop-rate', 
-                        type=float, 
-                        default=0.2, 
-                        help='Dropout rate')
-    parser.add_argument('--head-init-scale',
-                        type=float,
-                        default=0.001,
-                        help='Classifier head initialization scaling factor')
-    parser.add_argument('--resume-path',
-                        type=str, 
-                        default='',
-                        help='Resume full model and optimizer state from checkpoint (default: none)')
-    parser.add_argument('--train-batch-size',
-                        type=int,
-                        default=128,
-                        help='Training batch size per device')
-    parser.add_argument('--val-batch-size',
-                        type=int,
-                        default=128,
-                        help='Validation batch size per device')
-    parser.add_argument('--prefetcher',
-                        default=True,
-                        action='store_true',
-                        help='enable fast prefetcher')
-    parser.add_argument('--lr',
-                        type=float, 
-                        default=5e-4,
-                        help='Learning rate')
-    parser.add_argument('--weight-decay', 
-                        type=float, 
-                        default=0.05,
-                        help='weight decay')
-    parser.add_argument('--momentum',
-                        type=float, 
-                        default=0.9,
-                        help='Optimizer momentum ')
-    parser.add_argument('--opt', 
-                        default='adamw', 
-                        type=str,
-                        help='Optimizer')
-    parser.add_argument('--lr-base', 
-                        type=float, 
-                        default=5e-4,
-                        help='base learning rate: lr = lr_base * global_batch_size / base_size')
-    parser.add_argument('--lr-base-size', 
-                        type=int, 
-                        default=512,
-                        help='base learning rate batch size (divisor, default: 256).')
-    parser.add_argument('--output-dir', 
-                        type=str, 
-                        default='./checkpoints/my-vit-tiny-patch16-224',
-                        help='Output directory for checkpoints and summaries')
-    parser.add_argument('--warmup-prefix', 
-                        default=True,
-                        action='store_true',
-                        help='Whether to regard warmup epochs as extra epochs')
-    parser.add_argument('--epochs',
-                        type=int,
-                        default=60,
-                        help='Total number of epochs to train for')
-    parser.add_argument('--warmup-epochs',
-                        type=int,
-                        default=5,
-                        help='Number of warmup epochs')
-    parser.add_argument('--sched', 
-                        type=str, 
-                        default='cosine',
-                        help='LR scheduler (default: "cosine"')
-    parser.add_argument('--sched-on-updates',
-                        default=True,
-                        action='store_true',
-                        help='enable scheduler on updates')
-    parser.add_argument('--grad-accum-steps', 
-                        type=int,
-                        default=1,
-                        help='Number of gradient accumulation steps')
-    parser.add_argument('--channels-last', 
-                        default=True,
-                        action='store_true',
-                        help='Whether to use channels-last memory format')
-    parser.add_argument('--label-smoothing',
-                        type=float,
-                        default=0.1,
-                        help='Label smoothing factor')
-    parser.add_argument('--early-stop-patience', 
-                        type=int, 
-                        default=5, 
-                        help='Early stopping patience (epochs)')
-    parser.add_argument('--train-files',
-                        type=str,
-                        nargs='+',
-                        default=["./dataset/tiny-imagenet/data/train-00000-of-00001-1359597a978bc4fa.parquet"],
-                        help='Train files paths')
-    parser.add_argument('--val-files',
-                        type=str,
-                        nargs='+',
-                        default=["./dataset/tiny-imagenet/data/valid-00000-of-00001-70d52db3c749a935.parquet"],
-                        help='Val files paths')
-    args = parser.parse_args()
 
-    run(args)
+    model_group = parser.add_argument_group('Model Options')
+    model_group.add_argument('--device',
+                             type=str,
+                             default='cuda',
+                             help='Device type to use for training')
+    model_group.add_argument('--model',
+                             type=str,
+                             default='vit_tiny_patch16_224',
+                             help='Name of model to train')
+    model_group.add_argument('--drop-path-rate',
+                             type=float,
+                             default=0.2,
+                             help='Stochastic depth rate')
+    model_group.add_argument('--drop-rate',
+                             type=float, 
+                             default=0.2,
+                             help='Dropout rate')
+    model_group.add_argument('--head-init-scale',
+                             type=float,
+                             default=0.001,
+                             help='Classifier head initialization scaling factor')
+    model_group.add_argument('--resume-path',
+                             type=str, 
+                             default='',
+                             help='Resume full model and optimizer state from checkpoint (default: none)')
+    
+    data_group = parser.add_argument_group('Data Options')
+    data_group.add_argument('--train-files',
+                            type=str,
+                            nargs='+',
+                            default=["./dataset/tiny-imagenet/data/train-00000-of-00001-1359597a978bc4fa.parquet"],
+                            help='Train files paths')
+    data_group.add_argument('--val-files',
+                            type=str,
+                            nargs='+',
+                            default=["./dataset/tiny-imagenet/data/valid-00000-of-00001-70d52db3c749a935.parquet"],
+                            help='Val files paths')
+    data_group.add_argument('--train-batch-size',
+                            type=int,
+                            default=128,
+                            help='Training batch size per device')
+    data_group.add_argument('--val-batch-size',
+                            type=int,
+                            default=128,
+                            help='Validation batch size per device')
+    data_group.add_argument('--prefetcher',
+                            default=True,
+                            action='store_true',
+                            help='enable fast prefetcher')
+    
+    optim_group = parser.add_argument_group('Optimizer Options')
+    optim_group.add_argument('--label-smoothing',
+                             type=float,
+                             default=0.1,
+                             help='Label smoothing factor')
+    optim_group.add_argument('--opt',
+                             default='adamw',
+                             type=str,
+                             help='Optimizer')
+    optim_group.add_argument('--momentum',
+                             type=float,
+                             default=0.9,
+                             help='Optimizer momentum')
+    optim_group.add_argument('--weight-decay',
+                             type=float,
+                             default=0.05,
+                             help='weight decay')
+    optim_group.add_argument('--lr',
+                             type=float,
+                             default=5e-4,
+                             help='Learning rate')
+    optim_group.add_argument('--lr-base',
+                             type=float,
+                             default=5e-4,
+                             help='base learning rate: lr = lr_base * global_batch_size / base_size')
+    optim_group.add_argument('--lr-base-size',
+                             type=int,
+                             default=512,
+                             help='base learning rate batch size (divisor, default: 256).')
+    
+    saver_group = parser.add_argument_group('Saver Options')
+    saver_group.add_argument('--output-dir',
+                             type=str,
+                             default='./checkpoints/my-vit-tiny-patch16-224',
+                             help='Output directory for checkpoints and summaries')
+    
+    schedule_group = parser.add_argument_group('Scheduler Options')
+    schedule_group.add_argument('--sched',
+                                 type=str,
+                                 default='cosine',
+                                 help='LR scheduler (default: "cosine"')
+    schedule_group.add_argument('--sched-on-updates',
+                                default=True,
+                                action='store_true',
+                                help='enable scheduler on updates')
+    schedule_group.add_argument('--warmup-epochs',
+                                type=int,
+                                default=5,
+                                help='Number of warmup epochs')
+    schedule_group.add_argument('--warmup-prefix',
+                                default=True,
+                                action='store_true',
+                                help='Whether to regard warmup epochs as extra epochs')
+    
+    train_group = parser.add_argument_group('Training Options')
+    train_group.add_argument('--epochs',
+                             type=int,
+                             default=100,
+                             help='Total number of epochs to train for')
+    train_group.add_argument('--grad-accum-steps',
+                             type=int,
+                             default=1,
+                             help='Number of gradient accumulation steps')
+    train_group.add_argument('--channels-last',
+                             default=True,
+                             action='store_true',
+                             help='Whether to use channels-last memory format')
+    train_group.add_argument('--early-stop-patience',
+                             type=int,
+                             default=8,
+                             help='Early stopping patience (epochs)')
+    args = parser.parse_args()
+    return args
+
+
+if __name__ == '__main__':
+    run(defaultargs())

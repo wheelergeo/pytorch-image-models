@@ -161,7 +161,7 @@ class CheckpointSaver:
         tmp_save_path = os.path.join(self.recovery_dir, 'recovery_tmp' + self.extension)
         self._save(tmp_save_path, epoch)
 
-        filename = '-'.join([self.recovery_prefix, str(epoch), str(batch_idx)]) + self.extension
+        filename = '-'.join([self.recovery_prefix, 'epoch'+str(epoch), 'batch'+str(batch_idx)]) + self.extension
         save_path = os.path.join(self.recovery_dir, filename)
         self._replace(tmp_save_path, save_path)
 
