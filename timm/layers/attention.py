@@ -80,6 +80,8 @@ class Attention(nn.Module):
         # b: [batch_size, num_patches / 2, embed_dim]
         a, b = k[..., ::2, :], k[..., 1::2, :]
         # 避免 r 超过当前层可以合并的最大 token 数
+        if a.shape[-2] == 1:
+            return None
         r = min(r, b.shape[-2])
 
         # dot product to get similarity scores

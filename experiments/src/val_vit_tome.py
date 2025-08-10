@@ -48,15 +48,18 @@ def inference(model: torch.nn.Module,
 
 
 def evaluate(args: argparse.Namespace):
+    os.environ.pop("TOME_R", None)
     if args.tome_r:
         os.environ["TOME_R"] = str(args.tome_r)
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
 
     # 1. create model
-    model = timm.create_model('vit_base_patch16_224.augreg_in1k', 
+    model = timm.create_model(args.model, 
                               pretrained=False,
                               checkpoint_path=args.pretrained_model_path).to(device)
     data_config = timm.data.resolve_model_data_config(model)
+    if args.verbosity:
+        print(f'data_config: {data_config}')
 
     # 2. create dataset
     dataset = timm.data.create_dataset(
@@ -110,6 +113,9 @@ def evaluate(args: argparse.Namespace):
     
     # 6. save results to file
     if args.results_save_path:
+        if not os.path.exists(args.results_save_path):
+            os.mkdir(args.results_save_path)
+
         results = {
             "device": str(device),
             "flops": flops,
@@ -124,38 +130,46 @@ def evaluate(args: argparse.Namespace):
             json.dump(results, f, indent=4)
 
 
-if __name__ == "__main__":
+def defaultargs() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
-    parser.add_argument('--device', 
+    parser.add_argument('--model',
+                        type=str,
+                        default='vit_base_patch16_224.augreg_in1k',
+                        help='Model Name with training mode')
+    parser.add_argument('--device',
                         type=str,
                         default='cuda:0',
                         help='Device to use for inference')
-    parser.add_argument('--pretrained-model-path', 
+    parser.add_argument('--pretrained-model-path',
                         type=str,
                         default='./checkpoints/vit-base-patch16-224-augreg-in1k/model.safetensors',
                         help='Path to the pretrained model')
-    parser.add_argument('--batch-size', 
+    parser.add_argument('--batch-size',
                         type=int,
-                        default=4,
+                        default=128,
                         help='Batch size for dataloader')
-    parser.add_argument('--dataset-path', 
+    parser.add_argument('--dataset-path',
                         type=str,
                         default='./dataset/imagenet1k',
                         help='Path to the dataset')
     parser.add_argument('--results-save-path',
                         type=str,
-                        default='./workdir/performance',
+                        default='./workdir/deit-small-patch16-224-fb-in1k.perf',
                         help='Save results to JSON file')
     parser.add_argument('--tome-r',
                         type=int,
                         default=0,
                         help='Token merging\'s hyper-parameter')
-    parser.add_argument('--verbosity', 
+    parser.add_argument('--verbosity',
                         default=False,
                         action='store_true',
                         help='Enable verbose output')
     args = parser.parse_args()
+    return args
 
+
+if __name__ == "__main__":
+    args = defaultargs()
     for i in range(0, 17):
         args.tome_r = i
         print(f"------------------tome_r: {i}------------------")
