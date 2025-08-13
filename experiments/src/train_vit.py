@@ -472,7 +472,9 @@ def run(args: argparse.Namespace):
                         torch.distributed.broadcast(stop_flag, src=args.rank)
 
             if stop_flag.item():
-                    break
+                if args.distributed:
+                    torch.distributed.barrier()
+                break
     except KeyboardInterrupt:
         pass
 
