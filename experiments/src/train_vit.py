@@ -8,6 +8,7 @@ import json
 
 
 from timm.data import create_loader, resolve_model_data_config
+from timm.data.dataset import ImageDataset
 from timm.utils import CheckpointSaver, AverageMeter
 from timm.utils import update_summary, is_primary, reduce_tensor, get_outdir, accuracy, distribute_bn, init_distributed_device
 from timm.models import safe_model_name, resume_checkpoint
@@ -273,18 +274,28 @@ def run(args: argparse.Namespace):
         model = DistributedDataParallel(model, device_ids=[device])
             
     if is_primary(args):
-        print(f'Model {safe_model_name(args.model)} created, param count:{sum([m.numel() for m in model.parameters()])}')
+        print(f'1. Model {safe_model_name(args.model)} created, param count:{sum([m.numel() for m in model.parameters()])}')
 
     # 2. create dataset
-    train_dataset = ParquetImageDataset(parquet_files=args.train_files)
-    val_dataset = ParquetImageDataset(parquet_files=args.val_files)
+    match args.train_file_type:
+        case 'parquet':
+            train_dataset = ParquetImageDataset(parquet_dir=args.train_files)
+            val_dataset = ParquetImageDataset(parquet_dir=args.val_files)
+        case 'tar':
+            train_dataset = ImageDataset(root=args.train_files)
+            val_dataset = ImageDataset(root=args.val_files)
+        case 'dir':
+            train_dataset = ImageDataset(root=args.train_files)
+            val_dataset = ImageDataset(root=args.val_files)
+    if is_primary(args):
+        print(f'2. Dataset created, train dataset size: {len(train_dataset)}, val dataset size: {len(val_dataset)}')
 
     # 3. create dataloader
     train_batch_size = min(args.train_batch_size, len(train_dataset))
     val_batch_size = min(args.val_batch_size, len(val_dataset))
     num_workers = min([os.cpu_count() // args.world_size, train_batch_size if train_batch_size > 1 else 0, 8])
     if is_primary(args):
-        print('Using {} dataloader workers every process'.format(num_workers))
+        print('3. Using {} dataloader workers every process'.format(num_workers))
     train_loader = create_loader(
         train_dataset,
         input_size=data_config['input_size'],
@@ -340,7 +351,7 @@ def run(args: argparse.Namespace):
             **optimizer_kwargs(cfg=args)
         )
     if is_primary(args):
-        print(f'Learning rate: {args.lr:#.3g}')
+        print(f'4. Learning rate: {args.lr:#.3g}')
         
     # 5. create saver
     eval_metric = 'top1' if val_loader is not None else 'loss'
@@ -364,7 +375,7 @@ def run(args: argparse.Namespace):
             checkpoint_dir=output_dir,
             recovery_dir=output_dir,
             decreasing=decreasing_metric,
-            max_history=100,
+            max_history=args.max_history,
         )
 
     # 6. create scheduler
@@ -385,7 +396,7 @@ def run(args: argparse.Namespace):
             sched_explain = f'(warmup({args.warmup_epochs}) + epochs({args.epochs}))'
         else:
             sched_explain = f'(warmup({args.warmup_epochs}) + epochs({args.epochs - args.warmup_epochs}))'
-        print(f'Scheduled epochs: {num_epochs} {sched_explain}. '
+        print(f'5. Scheduled epochs: {num_epochs} {sched_explain}. '
               f'LR stepped per {"epoch" if lr_scheduler.t_in_epochs else "update"}.')
 
     # 7. train
@@ -509,11 +520,11 @@ def defaultargs() -> argparse.ArgumentParser:
                              help='Name of model to train')
     model_group.add_argument('--drop-path-rate',
                              type=float,
-                             default=0.2,
+                             default=0.1,
                              help='Stochastic depth rate')
     model_group.add_argument('--drop-rate',
                              type=float, 
-                             default=0.2,
+                             default=0.1,
                              help='Dropout rate')
     model_group.add_argument('--head-init-scale',
                              type=float,
@@ -525,15 +536,17 @@ def defaultargs() -> argparse.ArgumentParser:
                              help='Resume full model and optimizer state from checkpoint (default: none)')
     
     data_group = parser.add_argument_group('Data Options')
+    data_group.add_argument('--train-file-type',
+                            type=str,
+                            default='tar',
+                            help='Train file type, [parquet | tar | dir]')
     data_group.add_argument('--train-files',
                             type=str,
-                            nargs='+',
-                            default=["./dataset/tiny-imagenet/data/train-00000-of-00001-1359597a978bc4fa.parquet"],
+                            default='/nfs5/yrc/dataset/imagenet-1k/ILSVRC2012_img_train.tar',
                             help='Train files paths')
     data_group.add_argument('--val-files',
                             type=str,
-                            nargs='+',
-                            default=["./dataset/tiny-imagenet/data/valid-00000-of-00001-70d52db3c749a935.parquet"],
+                            default='/nfs5/yrc/dataset/imagenet-1k/ILSVRC2012_img_val.tar',
                             help='Val files paths')
     data_group.add_argument('--train-batch-size',
                             type=int,
@@ -583,6 +596,10 @@ def defaultargs() -> argparse.ArgumentParser:
                              type=str,
                              default='./checkpoints/my-vit-tiny-patch16-224',
                              help='Output directory for checkpoints and summaries')
+    saver_group.add_argument('--max-history',
+                             type=int,
+                             default=20,
+                             help='Maximum number of checkpoints to keep')
     
     schedule_group = parser.add_argument_group('Scheduler Options')
     schedule_group.add_argument('--sched',
@@ -605,7 +622,7 @@ def defaultargs() -> argparse.ArgumentParser:
     train_group = parser.add_argument_group('Training Options')
     train_group.add_argument('--epochs',
                              type=int,
-                             default=100,
+                             default=300,
                              help='Total number of epochs to train for')
     train_group.add_argument('--grad-accum-steps',
                              type=int,
@@ -617,7 +634,7 @@ def defaultargs() -> argparse.ArgumentParser:
                              help='Whether to use channels-last memory format')
     train_group.add_argument('--early-stop-patience',
                              type=int,
-                             default=8,
+                             default=10,
                              help='Early stopping patience (epochs)')
     args = parser.parse_args()
     return args
