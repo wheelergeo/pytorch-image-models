@@ -244,7 +244,7 @@ def run(args: argparse.Namespace):
         args.model,
         pretrained=False,
         in_chans=3,
-        num_classes=200,
+        num_classes=args.num_classes,
         drop_path_rate=args.drop_path_rate,
         drop_rate=args.drop_rate,
     ).to(device)
@@ -254,18 +254,13 @@ def run(args: argparse.Namespace):
     data_config = resolve_model_data_config(model)
     # optionally resume from a checkpoint
     if args.resume_path:
-        optimizer = create_optimizer_v2(
-            model,
-            **optimizer_kwargs(cfg=args)
-        )
         resume_epoch = resume_checkpoint(
             model,
             args.resume_path,
-            optimizer=optimizer,
+            optimizer=None,
             log_info=is_primary(args)
         )
         resume_epoch = resume_epoch if resume_epoch is not None else 0
-        args.lr = optimizer.param_groups[0]['lr']
     else:
         resume_epoch = 0
     if args.channels_last:
@@ -334,7 +329,7 @@ def run(args: argparse.Namespace):
     # 4. create loss function, optimizer
     train_loss_fn = LabelSmoothingCrossEntropy(smoothing=args.label_smoothing).to(device=device)
     validate_loss_fn = torch.nn.CrossEntropyLoss().to(device=device)
-    if args.lr is None:
+    if args.lr in (None, 0):
         on = args.opt.lower()
         global_batch_size = train_batch_size * args.world_size * args.grad_accum_steps
         batch_ratio = global_batch_size / args.lr_base_size
@@ -344,7 +339,7 @@ def run(args: argparse.Namespace):
             model,
             **optimizer_kwargs(cfg=args)
         )
-    elif args.lr is not None and args.weight_decay is not None and args.resume_path in (None, ''):
+    else:
         # default lr = 3e-4
         optimizer = create_optimizer_v2(
             model,
@@ -482,9 +477,9 @@ def run(args: argparse.Namespace):
                     if args.distributed:
                         torch.distributed.broadcast(stop_flag, src=args.rank)
 
+            if args.distributed:
+                torch.distributed.barrier()
             if stop_flag.item():
-                if args.distributed:
-                    torch.distributed.barrier()
                 break
     except KeyboardInterrupt:
         pass
@@ -518,6 +513,10 @@ def defaultargs() -> argparse.ArgumentParser:
                              type=str,
                              default='vit_tiny_patch16_224',
                              help='Name of model to train')
+    model_group.add_argument('--num-classes',
+                             type=int,
+                             default=1000,
+                             help='Number of classes for classification')
     model_group.add_argument('--drop-path-rate',
                              type=float,
                              default=0.1,
@@ -532,6 +531,7 @@ def defaultargs() -> argparse.ArgumentParser:
                              help='Classifier head initialization scaling factor')
     model_group.add_argument('--resume-path',
                              type=str, 
+                            #  default='./checkpoints/my-vit-tiny-patch16-224/20250813-143327-vit_tiny_patch16_224/checkpoint-10.pth.tar',
                              default='',
                              help='Resume full model and optimizer state from checkpoint (default: none)')
     
@@ -546,7 +546,7 @@ def defaultargs() -> argparse.ArgumentParser:
                             help='Train files paths')
     data_group.add_argument('--val-files',
                             type=str,
-                            default='/nfs5/yrc/dataset/imagenet-1k/ILSVRC2012_img_val.tar',
+                            default='/nfs5/yrc/dataset/imagenet-1k/val',
                             help='Val files paths')
     data_group.add_argument('--train-batch-size',
                             type=int,
@@ -612,7 +612,7 @@ def defaultargs() -> argparse.ArgumentParser:
                                 help='enable scheduler on updates')
     schedule_group.add_argument('--warmup-epochs',
                                 type=int,
-                                default=5,
+                                default=10,
                                 help='Number of warmup epochs')
     schedule_group.add_argument('--warmup-prefix',
                                 default=True,

@@ -65,7 +65,6 @@ def evaluate(args: argparse.Namespace):
     dataset = timm.data.create_dataset(
         name='',
         root=args.dataset_path,
-        split='val',
     )
     total_images = len(dataset)
 
@@ -150,7 +149,7 @@ def defaultargs() -> argparse.ArgumentParser:
                         help='Batch size for dataloader')
     parser.add_argument('--dataset-path',
                         type=str,
-                        default='./dataset/imagenet1k',
+                        default='/nfs5/yrc/dataset/imagenet-1k/val',
                         help='Path to the dataset')
     parser.add_argument('--results-save-path',
                         type=str,
