@@ -606,6 +606,8 @@ class VisionTransformer(nn.Module):
         self.feature_info = [
             dict(module=f'blocks.{i}', num_chs=embed_dim, reduction=reduction) for i in range(depth)]
         self.norm = norm_layer(embed_dim) if final_norm and not use_fc_norm else nn.Identity()
+        # Token Merging: expose to external access
+        self.merge_fn = [None] * depth
 
         # Classifier Head
         if global_pool == 'map':
@@ -951,6 +953,11 @@ class VisionTransformer(nn.Module):
             x = checkpoint_seq(self.blocks, x)
         else:
             x = self.blocks(x)
+
+        # Token Merging: expose merge_fn to external access
+        if os.environ.get("TOME_R") not in ("0", None, ""):
+            for i, blk in enumerate(self.blocks):
+                self.merge_fn[i] = blk.attn.merge_fn
 
         x = self.norm(x)
         return x
