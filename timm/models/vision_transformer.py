@@ -938,21 +938,29 @@ class VisionTransformer(nn.Module):
             attn_mask=attn_mask,
         )
 
-    def forward_features(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward_features(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None, output_hidden_states: Optional[bool] = None) -> torch.Tensor:
         """Forward pass through feature layers (embeddings, transformer blocks, post-transformer norm)."""
         x = self.patch_embed(x)
         x = self._pos_embed(x)
         x = self.patch_drop(x)
         x = self.norm_pre(x)
 
+        if output_hidden_states:
+            intermediates = [x]
+            
         if attn_mask is not None:
             # If mask provided, we need to apply blocks one by one
             for blk in self.blocks:
                 x = blk(x, attn_mask=attn_mask)
+                if output_hidden_states:
+                    intermediates.append(x)
         elif self.grad_checkpointing and not torch.jit.is_scripting():
             x = checkpoint_seq(self.blocks, x)
         else:
-            x = self.blocks(x)
+            for blk in self.blocks:
+                x = blk(x)
+                if output_hidden_states:
+                    intermediates.append(x)
 
         # Token Merging: expose merge_fn to external access
         if os.environ.get("TOME_R") not in ("0", None, ""):
@@ -960,6 +968,10 @@ class VisionTransformer(nn.Module):
                 self.merge_fn[i] = blk.attn.merge_fn
 
         x = self.norm(x)
+
+        if output_hidden_states:
+            return x, intermediates
+        
         return x
 
     def pool(self, x: torch.Tensor, pool_type: Optional[str] = None) -> torch.Tensor:
@@ -1001,9 +1013,17 @@ class VisionTransformer(nn.Module):
         x = self.head_drop(x)
         return x if pre_logits else self.head(x)
 
-    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        x = self.forward_features(x, attn_mask=attn_mask)
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None, output_hidden_states: Optional[bool] = None) -> torch.Tensor:
+        if output_hidden_states:
+            x, intermediates = self.forward_features(x, attn_mask=attn_mask, output_hidden_states=output_hidden_states)
+        else:
+            x = self.forward_features(x, attn_mask=attn_mask)
+
         x = self.forward_head(x)
+
+        if output_hidden_states:
+            return x, intermediates
+        
         return x
 
 
